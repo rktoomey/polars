@@ -136,6 +136,72 @@ def test_normalize_filepath(chunk_override: None, io_files_path: Path) -> None:
     )
 
 
+@pytest.mark.write_disk
+def test_read_csv_include_file_paths(tmp_path: Path) -> None:
+    paths = [tmp_path / "a.csv", tmp_path / "b.csv"]
+    for path, value in zip(paths, [1, 2], strict=True):
+        path.write_text(f"value\n{value}\n{value + 1}\n")
+
+    expected_paths = [str(path) for path in paths for _ in range(2)]
+    glob_df = pl.read_csv(tmp_path / "*.csv", include_file_paths="source")
+    assert glob_df.schema["source"] == pl.String
+    assert glob_df.get_column("source").to_list() == expected_paths
+
+    list_df = pl.read_csv(paths, include_file_paths="source")
+    assert list_df.get_column("source").to_list() == expected_paths
+
+    assert_frame_equal(
+        pl.read_csv(paths[0]),
+        pl.DataFrame({"value": [1, 2]}),
+    )
+    assert pl.read_csv(paths[0]).schema == {"value": pl.Int64}
+
+    single_str = pl.read_csv(str(paths[0]), include_file_paths="source")
+    assert single_str.get_column("source").to_list() == [str(paths[0])] * 2
+
+    list_str = pl.read_csv([str(path) for path in paths], include_file_paths="source")
+    assert list_str.get_column("source").to_list() == expected_paths
+
+    by_name = pl.read_csv(
+        paths[0],
+        columns=["value"],
+        include_file_paths="source",
+    )
+    assert by_name.columns == ["value", "source"]
+
+    by_position = pl.read_csv(
+        paths[0],
+        columns=[0],
+        include_file_paths="source",
+    )
+    assert by_position.columns == ["value", "source"]
+
+    renamed = pl.read_csv(
+        paths[0],
+        new_columns=["renamed"],
+        include_file_paths="source",
+    )
+    assert renamed.columns == ["renamed", "source"]
+    assert renamed.schema["source"] == pl.String
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "source"),
+    [
+        ({"use_pyarrow": True}, "data.csv"),
+        ({"n_threads": 2}, "data.csv"),
+        ({"batch_size": 1}, "data.csv"),
+        ({"encoding": "windows-1252"}, "data.csv"),
+        ({}, io.BytesIO(b"value\n1\n")),
+    ],
+)
+def test_read_csv_include_file_paths_rejects_incompatible_inputs(
+    kwargs: dict[str, object], source: object
+) -> None:
+    with pytest.raises(ValueError, match="include_file_paths"):
+        pl.read_csv(source, include_file_paths="source", **kwargs)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("read_fn", ["read_csv", "scan_csv"])
 def test_infer_schema_false(chunk_override: None, read_fn: str) -> None:
     csv = textwrap.dedent(

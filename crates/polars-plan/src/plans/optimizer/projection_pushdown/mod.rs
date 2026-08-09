@@ -503,6 +503,23 @@ impl ProjectionPushdownVisitor<'_, '_> {
                         }
                     }
 
+                    if truncate_len == 0 {
+                        if let Some(scalar_idx) = exprs.iter().position(|e| {
+                            matches!(
+                                aexpr_projection_height_rec(
+                                    e.node(),
+                                    self.expr_arena,
+                                    self.ae_nodes_scratch,
+                                    self.ae_height_scratch,
+                                ),
+                                EH::Scalar
+                            )
+                        }) {
+                            exprs.swap(scalar_idx, 0);
+                            truncate_len = 1;
+                        }
+                    }
+
                     exprs.truncate(truncate_len);
 
                     let schema_arc = schema;

@@ -1036,7 +1036,18 @@ def test_lit_cast_arithmetic_23677() -> None:
     df = pl.DataFrame({"a": [1]}, schema={"a": pl.Float32})
     q = df.lazy().select(pl.col("a") / pl.lit(1, pl.Int32))
     expected = pl.Schema({"a": pl.Float64})
+    assert q.collect_schema() == expected
     assert q.collect().schema == expected
+
+
+def test_lit_cast_arithmetic_24431() -> None:
+    df = pl.DataFrame({"a": [1]}, schema={"a": pl.Float32})
+    expected = pl.Schema({"a": pl.Float32})
+
+    for literal in (pl.lit(1), pl.lit(1, pl.Unknown)):
+        q = df.lazy().select(pl.col("a") / literal)
+        assert q.collect_schema() == expected
+        assert q.collect().schema == expected
 
 
 @pytest.mark.parametrize("col_dtype", NUMERIC_DTYPES + [pl.Unknown])
@@ -1047,19 +1058,13 @@ def test_lit_cast_arithmetic_matrix_schema(
     lit_dtype: PolarsDataType,
     op: Callable[[pl.Expr, pl.Expr], pl.Expr],
 ) -> None:
-    # Note (hacky): simply casting to 'pl.Unknown' would create
-    # `Unknown(UnknownKind::Any())` which is not what we want: the
-    # default maps to `Unknown(UnknownKind::Int(_)))` so we adjust
+    # Let the column use normal inference, but construct Unknown literals explicitly.
     df = (
         pl.DataFrame({"a": [1]})
         if col_dtype == pl.Unknown
         else pl.DataFrame({"a": [1]}, schema={"a": col_dtype})
     )
-    q = (
-        df.lazy().select(op(pl.col("a"), pl.lit(1)))
-        if lit_dtype == pl.Unknown
-        else df.lazy().select(op(pl.col("a"), pl.lit(1, lit_dtype)))
-    )
+    q = df.lazy().select(op(pl.col("a"), pl.lit(1, lit_dtype)))
     assert q.collect_schema() == q.collect().schema
 
 

@@ -228,6 +228,16 @@ impl FileReader for NDJsonFileReader {
             None
         };
 
+        // Bound positive-slice fan-out by the number of requested rows. Empty slices retain the
+        // configured pipeline count as their processors use the existing closed/count-only path.
+        let effective_num_pipelines = if !is_empty_slice && !is_negative_slice {
+            global_slice
+                .as_ref()
+                .map_or(num_pipelines, |slice| num_pipelines.min(slice.len()).max(1))
+        } else {
+            num_pipelines
+        };
+
         let (total_row_count_tx, total_row_count_rx) = if is_negative_slice && row_index.is_some() {
             let (tx, rx) = oneshot_channel::channel();
             (Some(tx), Some(rx))
@@ -265,8 +275,10 @@ impl FileReader for NDJsonFileReader {
 
         let (opt_linearizer, mut linearizer_inserters) =
             if global_slice.is_some() || row_index.is_some() {
-                let (a, b) =
-                    Linearizer::<Priority<Reverse<MorselSeq>, DataFrame>>::new(num_pipelines, 1);
+                let (a, b) = Linearizer::<Priority<Reverse<MorselSeq>, DataFrame>>::new(
+                    effective_num_pipelines,
+                    1,
+                );
                 (Some(a), b)
             } else {
                 (None, vec![])
@@ -283,7 +295,7 @@ impl FileReader for NDJsonFileReader {
                 eprintln!("[NDJsonFileReader]: Initialize morsel stream reverser");
             }
 
-            let (morsel_senders, rx) = FileReaderOutputSend::new_parallel(num_pipelines);
+            let (morsel_senders, rx) = FileReaderOutputSend::new_parallel(effective_num_pipelines);
             output_port = Some(rx);
 
             Some(AbortOnDropHandle::new(spawn(
@@ -353,10 +365,10 @@ impl FileReader for NDJsonFileReader {
         let chunk_reader = self.chunk_reader_builder.build(schema);
 
         let (line_batch_distribute_tx, line_batch_distribute_receivers) =
-            distributor_channel(num_pipelines, 1);
+            distributor_channel(effective_num_pipelines, 1);
 
         let mut morsel_senders = if !output_to_linearizer {
-            let (senders, outp) = FileReaderOutputSend::new_parallel(num_pipelines);
+            let (senders, outp) = FileReaderOutputSend::new_parallel(effective_num_pipelines);
             assert!(output_port.is_none());
             output_port = Some(outp);
             senders
@@ -400,7 +412,7 @@ impl FileReader for NDJsonFileReader {
                         needs_total_row_count,
 
                         // Only log from the last worker to prevent flooding output.
-                        verbose: verbose && worker_idx == num_pipelines - 1,
+                        verbose: verbose && worker_idx == effective_num_pipelines - 1,
                     }
                     .run(),
                 ))

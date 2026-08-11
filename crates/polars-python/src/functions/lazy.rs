@@ -469,8 +469,21 @@ pub fn fold(
     .into()
 }
 
+// `LiteralValue::get_datatype` exposes this as `Unknown(UnknownKind::Int(value))`
+// until arithmetic inference materializes it.
+#[inline]
+fn dyn_int_lit(value: i128) -> PyExpr {
+    Expr::Literal(LiteralValue::Dyn(DynLiteralValue::Int(value))).into()
+}
+
 #[pyfunction]
-pub fn lit(value: &Bound<'_, PyAny>, allow_object: bool, is_scalar: bool) -> PyResult<PyExpr> {
+#[pyo3(signature = (value, allow_object, is_scalar, requested_dtype=None))]
+pub fn lit(
+    value: &Bound<'_, PyAny>,
+    allow_object: bool,
+    is_scalar: bool,
+    requested_dtype: Option<Wrap<DataType>>,
+) -> PyResult<PyExpr> {
     let py = value.py();
     if value.is_instance_of::<PyBool>() {
         let val = value.extract::<bool>()?;
@@ -480,7 +493,7 @@ pub fn lit(value: &Bound<'_, PyAny>, allow_object: bool, is_scalar: bool) -> PyR
             .extract::<i128>()
             .map_err(|e| polars_err!(InvalidOperation: "integer too large for Polars: {e}"))
             .map_err(PyPolarsErr::from)?;
-        Ok(Expr::Literal(LiteralValue::Dyn(DynLiteralValue::Int(v))).into())
+        Ok(dyn_int_lit(v))
     } else if let Ok(float) = value.cast::<PyFloat>() {
         let val = float.extract::<f64>()?;
         Ok(Expr::Literal(LiteralValue::Dyn(DynLiteralValue::Float(val))).into())
@@ -492,6 +505,15 @@ pub fn lit(value: &Bound<'_, PyAny>, allow_object: bool, is_scalar: bool) -> PyR
             let av = s
                 .get(0)
                 .map_err(|_| PyValueError::new_err("expected at least 1 value"))?;
+            if requested_dtype
+                .as_ref()
+                .is_some_and(|dtype| matches!(&dtype.0, DataType::Unknown(UnknownKind::Any)))
+                && av.is_integer()
+            {
+                if let Some(value) = av.extract::<i128>() {
+                    return Ok(dyn_int_lit(value));
+                }
+            }
             let av = av.into_static();
             Ok(dsl::lit(Scalar::new(s.dtype().clone(), av)).into())
         } else {

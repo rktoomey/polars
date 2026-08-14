@@ -682,6 +682,7 @@ pub async fn csv_file_info(
 ) -> PolarsResult<FileInfo> {
     use polars_core::error::feature_gated;
     use polars_core::runtime::RAYON;
+    use polars_io::prelude::_csv_read_internal::{SplitLines, is_comment_line};
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     // Holding _first_scan_source should guarantee sources is not empty.
@@ -819,7 +820,67 @@ pub async fn csv_file_info(
                     csv_options.raise_if_empty,
                 )?;
 
-                if row_count < infer_schema_length && !reached_eof {
+                let first_inference_record_is_complete = || {
+                    let mut bytes = slice.as_ref();
+
+                    // `skip_lines` deliberately ignores CSV quoting.
+                    for _ in 0..csv_options.skip_lines {
+                        let Some(eol_offset) = bytes
+                            .iter()
+                            .position(|byte| *byte == csv_options.parse_options.eol_char)
+                        else {
+                            return false;
+                        };
+                        bytes = &bytes[eol_offset + 1..];
+                    }
+
+                    const UTF8_BOM_MARKER: &[u8] = b"\xef\xbb\xbf";
+                    if bytes.starts_with(UTF8_BOM_MARKER) {
+                        bytes = &bytes[UTF8_BOM_MARKER.len()..];
+                    }
+
+                    let mut skip_empty = csv_options.has_header;
+                    let mut skip_rows = csv_options.skip_rows;
+                    for line in SplitLines::new(
+                        bytes,
+                        csv_options.parse_options.quote_char,
+                        csv_options.parse_options.eol_char,
+                        csv_options.parse_options.comment_prefix.as_ref(),
+                    ) {
+                        let line_end =
+                            line.as_ptr() as usize + line.len() - bytes.as_ptr() as usize;
+                        if bytes.get(line_end) != Some(&csv_options.parse_options.eol_char) {
+                            return false;
+                        }
+
+                        if skip_empty {
+                            if line.is_empty() || line == b"\r" {
+                                continue;
+                            }
+                            skip_empty = false;
+                        }
+
+                        let is_comment = is_comment_line(
+                            line,
+                            csv_options.parse_options.comment_prefix.as_ref(),
+                        );
+                        if is_comment {
+                            continue;
+                        }
+                        if skip_rows > 0 {
+                            skip_rows -= 1;
+                            continue;
+                        }
+
+                        return true;
+                    }
+
+                    false
+                };
+
+                let needs_more_data = row_count < infer_schema_length
+                    || (infer_schema_length == 0 && !first_inference_record_is_complete());
+                if needs_more_data && !reached_eof {
                     if compression.is_some() && bytes_read == read_size {
                         // Decompressor had more to give — read_size too small
                         try_read_size *= 2;

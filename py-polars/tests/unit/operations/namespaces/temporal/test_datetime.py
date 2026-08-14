@@ -147,7 +147,33 @@ def test_local_date_sortedness(time_zone: str | None) -> None:
         pl.Series([datetime(2022, 1, 1, 23)] * 2).dt.replace_time_zone(time_zone)
     ).sort()
     result = ser.dt.date()
-    assert result.flags["SORTED_ASC"]
+    assert result.flags["SORTED_ASC"] is (time_zone != "Asia/Kathmandu")
+
+
+def test_local_date_sortedness_time_zone_rollback() -> None:
+    utc = ZoneInfo("UTC")
+    ser = (
+        pl.Series(
+            [
+                datetime(2010, 3, 4, 13, tzinfo=utc),
+                datetime(2010, 3, 4, 14, tzinfo=utc),
+                datetime(2010, 3, 4, 15, tzinfo=utc),
+            ],
+            dtype=pl.Datetime("us", "UTC"),
+        )
+        .dt.convert_time_zone("Antarctica/Casey")
+        .sort()
+    )
+
+    result = ser.dt.date()
+
+    assert not result.flags["SORTED_ASC"]
+    assert result.sort().to_list() == [
+        date(2010, 3, 4),
+        date(2010, 3, 5),
+        date(2010, 3, 5),
+    ]
+    assert result.min() == date(2010, 3, 4)
 
 
 @pytest.mark.parametrize("time_zone", [None, "Asia/Kathmandu", "UTC"])
@@ -431,6 +457,37 @@ def test_truncate(
     assert out.dt[-3] == stop - timedelta(hours=1)
     assert out.dt[-2] == stop - timedelta(hours=1)
     assert out.dt[-1] == stop
+
+
+def test_truncate_sortedness_time_zone_rollback() -> None:
+    utc = ZoneInfo("UTC")
+    ser = (
+        pl.Series(
+            [
+                datetime(2014, 10, 25, 13, 30, tzinfo=utc),
+                datetime(2014, 10, 25, 14, 30, tzinfo=utc),
+            ],
+            dtype=pl.Datetime("us", "UTC"),
+        )
+        .dt.convert_time_zone("Asia/Magadan")
+        .sort()
+    )
+
+    result = ser.dt.truncate("1h")
+
+    assert not result.flags["SORTED_ASC"]
+    assert result.sort().dt.convert_time_zone("UTC").to_list() == [
+        datetime(2014, 10, 25, 12, tzinfo=utc),
+        datetime(2014, 10, 25, 13, tzinfo=utc),
+    ]
+
+    naive = pl.Series(
+        [datetime(2014, 10, 26, 0, 30), datetime(2014, 10, 26, 1, 30)]
+    ).sort()
+    assert naive.dt.truncate("1h").flags["SORTED_ASC"]
+
+    dates = pl.Series([date(2014, 10, 25), date(2014, 10, 26)]).sort()
+    assert dates.dt.truncate("1d").flags["SORTED_ASC"]
 
 
 def test_truncate_negative() -> None:

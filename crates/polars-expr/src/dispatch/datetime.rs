@@ -88,7 +88,7 @@ pub(super) fn date(s: &Column) -> PolarsResult<Column> {
     match s.dtype() {
         #[cfg(feature = "timezones")]
         DataType::Datetime(_, Some(_)) => {
-            let mut out = {
+            let out = {
                 polars_ops::chunked_array::replace_time_zone(
                     s.datetime().unwrap(),
                     None,
@@ -97,12 +97,6 @@ pub(super) fn date(s: &Column) -> PolarsResult<Column> {
                 )?
                 .cast(&DataType::Date)?
             };
-            // `replace_time_zone` may unset sorted flag. But, we're only taking the date
-            // part of the result, so we can safely preserve the sorted flag here. We may
-            // need to make an exception if a time zone introduces a change which involves
-            // "going back in time" and repeating a day, but we're not aware of that ever
-            // having happened.
-            out.set_sorted_flag(s.is_sorted_flag());
             Ok(out.into())
         },
         DataType::Datetime(_, _) => s
@@ -326,7 +320,12 @@ pub(super) fn truncate(s: &[Column]) -> PolarsResult<Column> {
         DataType::Date => time_series.date()?.truncate(None, every)?.into_column(),
         dt => polars_bail!(opq = round, got = dt, expected = "date/datetime"),
     };
-    out.set_sorted_flag(time_series.is_sorted_flag());
+    if matches!(
+        time_series.dtype(),
+        DataType::Date | DataType::Datetime(_, None)
+    ) {
+        out.set_sorted_flag(time_series.is_sorted_flag());
+    }
     Ok(out)
 }
 

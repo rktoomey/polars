@@ -1646,3 +1646,25 @@ def test_scan_slice_filter_pushdown_22790() -> None:
     assert plan.index("SLICE") > plan.index("SCAN")
 
     assert_frame_equal(q.collect(), pl.DataFrame({"a": [7, 8]}))
+
+
+@pytest.mark.write_disk
+def test_scan_csv_infer_schema_zero_wide_header(
+    tmp_path: Path, plmonkeypatch: PlMonkeyPatch
+) -> None:
+    _enable_force_async(plmonkeypatch)
+
+    column_count = 20_000
+    column_names = [f"c{i}" for i in range(column_count)]
+    values = [f"v{i}" for i in range(column_count)]
+    header = ",".join(column_names)
+    assert len(header.encode()) > 64 * 1024
+
+    path = tmp_path / "wide.csv"
+    path.write_text(f"{header}\n{','.join(values)}\n")
+
+    result = pl.scan_csv(path, infer_schema_length=0).collect()
+
+    assert result.shape == (1, column_count)
+    assert result.dtypes == [pl.String] * column_count
+    assert result.row(0) == tuple(values)

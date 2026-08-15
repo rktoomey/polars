@@ -1,0 +1,16 @@
+baseline: run1
+verify:
+  projection: >-
+    PATH="$HOME/.rustup/toolchains/nightly-2026-04-01-aarch64-apple-darwin/bin:$(dirname "$(uv python find 3.13)"):$PATH"
+    CARGO_TARGET_DIR="$HOME/.cache/mochi-polars-target" make build &&
+    cargo fmt --all -- --check &&
+    .venv/bin/ruff check py-polars/tests/unit/lazyframe/test_projections.py &&
+    .venv/bin/ruff format --check py-polars/tests/unit/lazyframe/test_projections.py &&
+    .venv/bin/pytest -q py-polars/tests/unit/lazyframe/test_projections.py
+  run1: >-
+    PATH="$HOME/.rustup/toolchains/nightly-2026-04-01-aarch64-apple-darwin/bin:$(dirname "$(uv python find 3.13)"):$PATH"
+    CARGO_TARGET_DIR="$HOME/.cache/mochi-polars-target" make build &&
+    cargo fmt --all -- --check &&
+    .venv/bin/ruff check py-polars/tests/unit/lazyframe/test_projections.py &&
+    .venv/bin/ruff format --check py-polars/tests/unit/lazyframe/test_projections.py &&
+    .venv/bin/pytest -q py-polars/tests/unit/lazyframe/test_projections.py

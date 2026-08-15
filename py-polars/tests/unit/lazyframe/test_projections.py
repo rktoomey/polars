@@ -979,3 +979,37 @@ def test_projection_pushdown_select_non_column_height_27807() -> None:
     )
 
     assert_frame_equal(q.collect(), pl.Series("y", [10, 10, 10]).to_frame())
+
+
+def test_projection_pushdown_cross_join_pruned_median() -> None:
+    lf = pl.LazyFrame({"symbol": ["a", "b", "c"], "value": [1, 2, 4]})
+    q = (
+        lf.select("symbol")
+        .join(lf.select(median=pl.col("value").median()), how="cross")
+        .select("symbol")
+    )
+    expected = pl.DataFrame({"symbol": ["a", "b", "c"]})
+
+    optimized = q.collect()
+    without_projection_pushdown = q.collect(
+        optimizations=pl.QueryOptFlags(projection_pushdown=False)
+    )
+    assert_frame_equal(optimized, expected)
+    assert_frame_equal(optimized, without_projection_pushdown)
+
+
+def test_projection_pushdown_cross_join_pruned_mean() -> None:
+    lf = pl.LazyFrame({"symbol": ["a", "b", "c"], "value": [1, 2, 4]})
+    q = (
+        lf.select("symbol")
+        .join(lf.select(mean=pl.col("value").mean()), how="cross")
+        .select("symbol")
+    )
+    expected = pl.DataFrame({"symbol": ["a", "b", "c"]})
+
+    optimized = q.collect()
+    without_projection_pushdown = q.collect(
+        optimizations=pl.QueryOptFlags(projection_pushdown=False)
+    )
+    assert_frame_equal(optimized, expected)
+    assert_frame_equal(optimized, without_projection_pushdown)

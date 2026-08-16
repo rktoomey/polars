@@ -1034,32 +1034,40 @@ def test_cast_optimizer_in_list_eval_23924(
 
 def test_lit_cast_arithmetic_23677() -> None:
     df = pl.DataFrame({"a": [1]}, schema={"a": pl.Float32})
-    q = df.lazy().select(pl.col("a") / pl.lit(1, pl.Int32))
-    expected = pl.Schema({"a": pl.Float64})
-    assert q.collect().schema == expected
+    expected_dynamic = pl.Schema({"a": pl.Float32})
+    # Dynamic integer literals preserve Float32; a concrete integer widens to Float64.
+
+    q_default = df.lazy().select(pl.col("a") / pl.lit(1))
+    assert q_default.collect_schema() == expected_dynamic
+    assert q_default.collect().schema == expected_dynamic
+
+    q_unknown = df.lazy().select(pl.col("a") / pl.lit(1, pl.Unknown))
+    assert q_unknown.collect_schema() == expected_dynamic
+    assert q_unknown.collect().schema == expected_dynamic
+
+    q_int32 = df.lazy().select(pl.col("a") / pl.lit(1, pl.Int32))
+    expected_concrete = pl.Schema({"a": pl.Float64})
+    assert q_int32.collect_schema() == expected_concrete
+    assert q_int32.collect().schema == expected_concrete
 
 
 @pytest.mark.parametrize("col_dtype", NUMERIC_DTYPES + [pl.Unknown])
-@pytest.mark.parametrize("lit_dtype", NUMERIC_DTYPES + [pl.Unknown])
+@pytest.mark.parametrize("lit_dtype", [None, *NUMERIC_DTYPES, pl.Unknown])
 @pytest.mark.parametrize("op", [operator.mul, operator.truediv])
 def test_lit_cast_arithmetic_matrix_schema(
     col_dtype: PolarsDataType,
-    lit_dtype: PolarsDataType,
+    lit_dtype: PolarsDataType | None,
     op: Callable[[pl.Expr, pl.Expr], pl.Expr],
 ) -> None:
-    # Note (hacky): simply casting to 'pl.Unknown' would create
-    # `Unknown(UnknownKind::Any())` which is not what we want: the
-    # default maps to `Unknown(UnknownKind::Int(_)))` so we adjust
+    # Construct inferred operands directly; casting to Unknown would create
+    # Unknown(UnknownKind::Any) instead of a value-carrying dynamic integer.
     df = (
         pl.DataFrame({"a": [1]})
         if col_dtype == pl.Unknown
         else pl.DataFrame({"a": [1]}, schema={"a": col_dtype})
     )
-    q = (
-        df.lazy().select(op(pl.col("a"), pl.lit(1)))
-        if lit_dtype == pl.Unknown
-        else df.lazy().select(op(pl.col("a"), pl.lit(1, lit_dtype)))
-    )
+    literal = pl.lit(1) if lit_dtype is None else pl.lit(1, lit_dtype)
+    q = df.lazy().select(op(pl.col("a"), literal))
     assert q.collect_schema() == q.collect().schema
 
 

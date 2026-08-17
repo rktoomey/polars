@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     mapper=lambda x: not x,
 )
 def read_csv(
-    source: str | Path | IO[str] | IO[bytes] | bytes,
+    source: str | Path | IO[str] | IO[bytes] | bytes | Sequence[str | Path],
     *,
     has_header: bool = True,
     columns: Sequence[int] | Sequence[str] | None = None,
@@ -99,6 +99,7 @@ def read_csv(
     raise_if_empty: bool = True,
     truncate_ragged_lines: bool = False,
     decimal_comma: bool = False,
+    include_file_paths: str | None = None,
     glob: bool = True,
 ) -> DataFrame:
     r"""
@@ -249,6 +250,8 @@ def read_csv(
         Parse floats using a comma as the decimal separator instead of a period.
     glob
         Expand path given via globbing rules.
+    include_file_paths
+        Include a String column containing the source path for each row.
 
     Returns
     -------
@@ -305,7 +308,27 @@ def read_csv(
     _check_arg_is_1byte("eol_char", eol_char, can_be_empty=False)
 
     projection, columns = parse_columns_arg(columns)
+
     storage_options = storage_options or {}
+    if include_file_paths is not None:
+        if use_pyarrow:
+            msg = "`include_file_paths` is incompatible with `use_pyarrow`"
+            raise ValueError(msg)
+        if not (
+            isinstance(source, (str, Path))
+            or is_path_or_str_sequence(source, allow_str=False)
+        ):
+            msg = "`include_file_paths` requires a filesystem path source"
+            raise ValueError(msg)
+        if n_threads is not None:
+            msg = "`include_file_paths` is incompatible with `n_threads`"
+            raise ValueError(msg)
+        if batch_size != 8192:
+            msg = "`include_file_paths` is incompatible with `batch_size`"
+            raise ValueError(msg)
+        if encoding not in {"utf8", "utf8-lossy"}:
+            msg = f"`include_file_paths` is incompatible with encoding {encoding!r}"
+            raise ValueError(msg)
 
     if columns and not has_header:
         for column in columns:
@@ -493,6 +516,52 @@ def read_csv(
 
     if not infer_schema:
         infer_schema_length = 0
+    if include_file_paths is not None:
+        source_normalized: str | list[str]
+        if isinstance(source, (str, Path)):
+            source_normalized = normalize_filepath(source, check_not_directory=False)
+        else:
+            source_normalized = [
+                normalize_filepath(path, check_not_directory=False) for path in source
+            ]
+
+        lf = _scan_csv_impl(
+            source_normalized,
+            has_header=has_header,
+            separator=separator,
+            comment_prefix=comment_prefix,
+            quote_char=quote_char,
+            skip_rows=skip_rows,
+            skip_lines=skip_lines,
+            schema_overrides=schema_overrides,  # type: ignore[arg-type]
+            schema=schema,
+            null_values=null_values,
+            empty_string_is_null=empty_string_is_null,
+            ignore_errors=ignore_errors,
+            try_parse_dates=try_parse_dates,
+            infer_schema_length=infer_schema_length,
+            n_rows=n_rows,
+            encoding=encoding,  # type: ignore[arg-type]
+            low_memory=low_memory,
+            rechunk=rechunk,
+            skip_rows_after_header=skip_rows_after_header,
+            row_index_name=row_index_name,
+            row_index_offset=row_index_offset,
+            eol_char=eol_char,
+            raise_if_empty=raise_if_empty,
+            truncate_ragged_lines=truncate_ragged_lines,
+            decimal_comma=decimal_comma,
+            glob=glob,
+            storage_options=storage_options,
+            new_columns=new_columns,
+            include_file_paths=include_file_paths,
+        )
+
+        if columns:
+            lf = lf.select([*columns, F.col(include_file_paths)])
+        elif projection:
+            lf = lf.select([F.nth(projection), F.col(include_file_paths)])
+        return lf.collect()
 
     encoding_supported_in_lazy = encoding in {"utf8", "utf8-lossy"}
 

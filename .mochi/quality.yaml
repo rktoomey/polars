@@ -1,0 +1,16 @@
+baseline: run0
+verify:
+  csv: >-
+    PATH="$HOME/.rustup/toolchains/nightly-2026-04-01-aarch64-apple-darwin/bin:$(dirname "$(uv python find 3.13)"):$PATH"
+    CARGO_TARGET_DIR="$HOME/.cache/mochi-polars-target" make build &&
+    .venv/bin/pytest -q py-polars/tests/unit/io/test_csv.py
+    py-polars/tests/unit/io/test_lazy_csv.py
+  run0: >-
+    PATH="$HOME/.rustup/toolchains/nightly-2026-04-01-aarch64-apple-darwin/bin:$(dirname "$(uv python find 3.13)"):$PATH"
+    CARGO_TARGET_DIR="$HOME/.cache/mochi-polars-target" make build &&
+    .venv/bin/ruff check py-polars/src/polars/io/csv/functions.py
+    py-polars/tests/unit/io/test_csv.py py-polars/tests/unit/io/test_lazy_csv.py &&
+    .venv/bin/ruff format --check py-polars/src/polars/io/csv/functions.py
+    py-polars/tests/unit/io/test_csv.py py-polars/tests/unit/io/test_lazy_csv.py &&
+    .venv/bin/pytest -q py-polars/tests/unit/io/test_csv.py
+    py-polars/tests/unit/io/test_lazy_csv.py
